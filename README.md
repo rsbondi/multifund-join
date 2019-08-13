@@ -1,0 +1,1 @@
+WIP - joint channel opening of multiple c-lightning peers via a signle transaction
