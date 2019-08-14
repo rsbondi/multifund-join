@@ -1,7 +1,12 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
+	"fmt"
 	"log"
+	"net/http"
+	"time"
 
 	"github.com/niftynei/glightning/jrpc2"
 	"github.com/rsbondi/multifund/rpc"
@@ -12,36 +17,47 @@ const JoinMultiDescription = `Use external wallet funding feature to build a tra
 among multiple peers{channels} is an array of object{"id" string, "satoshi" int, "announce" bool}`
 
 type MultiChannelJoin struct {
-	Channels []rpc.FundChannelStartRequest
+	Host     string                        `json:"host"`
+	Channels []rpc.FundChannelStartRequest `json:"channels"`
 }
 
 func (m *MultiChannelJoin) Call() (jrpc2.Result, error) {
-	return joinMultiStart(&m.Channels)
+	return joinMultiStart(m)
 }
 
 func (f *MultiChannelJoin) Name() string {
-	return "join_multi_start"
+	return "joinmulti_start"
 }
 
 func (f *MultiChannelJoin) New() interface{} {
 	return &MultiChannelJoin{}
 }
 
-func joinMultiStart(chans *[]rpc.FundChannelStartRequest) (jrpc2.Result, error) {
-	info, err := fundr.GetChannelAddresses(chans)
+func joinMultiStart(m *MultiChannelJoin) (jrpc2.Result, error) {
+	info, err := fundr.GetChannelAddresses(&m.Channels)
 	if err != nil {
 		cancelMulti(info.Outputs)
 		return nil, err
 	}
 
-	// here is where we deviate from the local version
-	// before we created the transaction, now we have to send our info to the server
-	// we need to be listening for the server's response
-	// so we need to send and bail out
-	// when we get the transaction, we need to verify all of our channel outputs and change address amounts
-	// if correct, sign, if not screw you
+	jsoncall, err := json.Marshal(&info)
+	if err != nil {
+		log.Printf("unable to marshall json: %s", err.Error())
+		return nil, err
+	}
+	req, _ := http.NewRequest("POST", fmt.Sprintf("%s/join", m.Host), bytes.NewBuffer(jsoncall))
+	client := &http.Client{Timeout: time.Second * 10}
+	res, err := client.Do(req)
+	if err != nil {
+		log.Printf("unable to do request: %s", err.Error())
+		return nil, err
+	}
+	defer res.Body.Close()
 
-	return nil, nil
+	result := ""
+	err = json.NewDecoder(res.Body).Decode(&result)
+
+	return result, nil
 }
 
 func cancelMulti(outputs map[string]*wallet.Outputs) {
