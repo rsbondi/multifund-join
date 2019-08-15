@@ -19,6 +19,7 @@ const VERSION = "0.0.1-WIP"
 
 var plugin *glightning.Plugin
 var fundr *funder.Funder
+var queue []funder.FundingInfo
 
 func handleJoin(w http.ResponseWriter, req *http.Request) {
 	decoder := json.NewDecoder(req.Body)
@@ -26,11 +27,13 @@ func handleJoin(w http.ResponseWriter, req *http.Request) {
 	err := decoder.Decode(&joinReq)
 	var res *multijoin.JoinStartResponse
 	if err != nil {
+		log.Printf("unable to decode request: %s", err.Error())
 		res = &multijoin.JoinStartResponse{
 			Response: "",
 			Error:    err.Error(),
 		}
 	} else {
+		log.Printf("queuing request: %v", joinReq.Recipients)
 		n := len(joinReq.Outputs)
 		word := "channel"
 		if n > 1 {
@@ -40,6 +43,24 @@ func handleJoin(w http.ResponseWriter, req *http.Request) {
 			Response: fmt.Sprintf("successfuly queued to join funding for %d %s", n, word),
 			Error:    "",
 		}
+	}
+
+	queue = append(queue, joinReq)
+	if len(queue) >= 2 {
+		f := &funder.FundingInfo{
+			Recipients: make([]*wallet.TxRecipient, 0),
+			Utxos:      make([]wallet.UTXO, 0),
+		}
+		for _, q := range queue {
+			f.Recipients = append(f.Recipients, q.Recipients...)
+			f.Utxos = append(f.Utxos, q.Utxos...)
+		}
+
+		tx, err := wallet.CreateTransaction(f.Recipients, f.Utxos, fundr.BitcoinNet)
+		if err != nil {
+			log.Printf("no go: %s", err.Error())
+		}
+		log.Printf("tx from join: %s", tx.String())
 	}
 
 	// TODO: store this or proceed if threshold reached
@@ -53,6 +74,7 @@ func main() {
 	plugin = glightning.NewPlugin(onInit)
 	fundr = &funder.Funder{}
 	fundr.Lightning = glightning.NewLightning()
+	queue = make([]funder.FundingInfo, 0)
 	rpc.Init(fundr.Lightning)
 
 	registerOptions(plugin)
