@@ -9,6 +9,7 @@ import (
 
 	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/niftynei/glightning/glightning"
+	"github.com/rsbondi/multifund-join/multijoin"
 	"github.com/rsbondi/multifund/funder"
 	"github.com/rsbondi/multifund/rpc"
 	"github.com/rsbondi/multifund/wallet"
@@ -23,16 +24,29 @@ func handleJoin(w http.ResponseWriter, req *http.Request) {
 	decoder := json.NewDecoder(req.Body)
 	var joinReq funder.FundingInfo
 	err := decoder.Decode(&joinReq)
-	log.Printf("request recieved: %v", joinReq.Recipients[1].Address)
+	var res *multijoin.JoinStartResponse
 	if err != nil {
-		log.Printf("unable to decode join request: %s", err.Error())
+		res = &multijoin.JoinStartResponse{
+			Response: "",
+			Error:    err.Error(),
+		}
+	} else {
+		n := len(joinReq.Outputs)
+		word := "channel"
+		if n > 1 {
+			word = word + "s"
+		}
+		res = &multijoin.JoinStartResponse{
+			Response: fmt.Sprintf("successfuly queued to join funding for %d %s", n, word),
+			Error:    "",
+		}
 	}
 
 	// TODO: store this or proceed if threshold reached
 	//       how to respond once threshold is reached
 	//         does user need to be listening also, how to track?
 	//         or web socket?  what if connection breaks?
-	w.Write([]byte("successfuly queued to join channel funding"))
+	json.NewEncoder(w).Encode(res)
 }
 
 func main() {

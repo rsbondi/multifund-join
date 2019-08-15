@@ -3,12 +3,14 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
 	"time"
 
 	"github.com/niftynei/glightning/jrpc2"
+	"github.com/rsbondi/multifund-join/multijoin"
 	"github.com/rsbondi/multifund/rpc"
 	"github.com/rsbondi/multifund/wallet"
 )
@@ -54,10 +56,19 @@ func joinMultiStart(m *MultiChannelJoin) (jrpc2.Result, error) {
 	}
 	defer res.Body.Close()
 
-	result := ""
+	result := &multijoin.JoinStartResponse{}
 	err = json.NewDecoder(res.Body).Decode(&result)
 
-	return result, nil
+	if err != nil {
+		log.Printf("unable to read response: %s", err.Error())
+		return nil, err
+	}
+	if result.Error != "" {
+		log.Printf("failed to queue channel open: %s", result.Error)
+		return nil, errors.New(result.Error)
+	}
+
+	return string(result.Response), nil
 }
 
 func cancelMulti(outputs map[string]*wallet.Outputs) {
