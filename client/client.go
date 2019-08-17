@@ -65,7 +65,6 @@ func onInit(plugin *glightning.Plugin, options map[string]string, config *glight
 func registerMethods(p *glightning.Plugin) {
 	multi := glightning.NewRpcMethod(&MultiChannelJoin{}, `Open multiple channels in single transaction`)
 	multi.LongDesc = JoinMultiDescription
-	multi.Usage = "channels"
 	p.RegisterMethod(multi)
 	log.Printf("method registered: %s", multi.Description())
 }

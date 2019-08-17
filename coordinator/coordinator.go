@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 
 	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/niftynei/glightning/glightning"
@@ -20,6 +21,8 @@ const VERSION = "0.0.1-WIP"
 var plugin *glightning.Plugin
 var fundr *funder.Funder
 var queue []funder.FundingInfo
+var mixid = 1
+var mix map[string]wallet.Transaction
 
 func handleJoin(w http.ResponseWriter, req *http.Request) {
 	decoder := json.NewDecoder(req.Body)
@@ -28,8 +31,9 @@ func handleJoin(w http.ResponseWriter, req *http.Request) {
 	var res *multijoin.JoinStartResponse
 	if err != nil {
 		log.Printf("unable to decode request: %s", err.Error())
+		data := &multijoin.JoinStartResponseData{}
 		res = &multijoin.JoinStartResponse{
-			Response: "",
+			Response: data,
 			Error:    err.Error(),
 		}
 	} else {
@@ -39,8 +43,12 @@ func handleJoin(w http.ResponseWriter, req *http.Request) {
 		if n > 1 {
 			word = word + "s"
 		}
+		data := &multijoin.JoinStartResponseData{
+			Message: fmt.Sprintf("successfuly queued to join funding for %d %s", n, word),
+			Id:      mixid,
+		}
 		res = &multijoin.JoinStartResponse{
-			Response: fmt.Sprintf("successfuly queued to join funding for %d %s", n, word),
+			Response: data,
 			Error:    "",
 		}
 	}
@@ -61,6 +69,8 @@ func handleJoin(w http.ResponseWriter, req *http.Request) {
 			log.Printf("no go: %s", err.Error())
 		}
 		log.Printf("tx from join: %s", tx.String())
+		mix[string(mixid)] = tx
+		mixid++
 	}
 
 	// TODO: store this or proceed if threshold reached
@@ -68,6 +78,42 @@ func handleJoin(w http.ResponseWriter, req *http.Request) {
 	//         does user need to be listening also, how to track?
 	//         or web socket?  what if connection breaks?
 	json.NewEncoder(w).Encode(res)
+}
+
+func handleStatus(w http.ResponseWriter, req *http.Request) {
+	id := req.URL.Path[len("/status/"):]
+	var res *multijoin.JoinStatusResponse
+	if tx, ok := mix[id]; ok {
+		res = &multijoin.JoinStatusResponse{
+			Tx:    &tx.Unsigned,
+			Error: "",
+		}
+		json.NewEncoder(w).Encode(res)
+		return
+	}
+	mid, err := strconv.ParseInt(id, 10, 32)
+	if err != nil {
+		res = &multijoin.JoinStatusResponse{
+			Tx:    nil,
+			Error: err.Error(),
+		}
+		json.NewEncoder(w).Encode(res)
+		return
+	}
+	if int(mid) > mixid {
+		res = &multijoin.JoinStatusResponse{
+			Tx:    nil,
+			Error: "Invalid mix id",
+		}
+		json.NewEncoder(w).Encode(res)
+		return
+	}
+	res = &multijoin.JoinStatusResponse{
+		Tx:    nil,
+		Error: "",
+	}
+	json.NewEncoder(w).Encode(res)
+
 }
 
 func main() {
@@ -113,6 +159,7 @@ func onInit(plugin *glightning.Plugin, options map[string]string, config *glight
 	}
 
 	http.HandleFunc("/join", handleJoin)
+	http.HandleFunc("/status/", handleStatus)
 
 	log.Printf("listening: %s", options["multi-join-port"])
 

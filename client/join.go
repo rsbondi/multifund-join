@@ -23,6 +23,8 @@ type MultiChannelJoin struct {
 	Channels []rpc.FundChannelStartRequest `json:"channels"`
 }
 
+var joinid int
+
 func (m *MultiChannelJoin) Call() (jrpc2.Result, error) {
 	return joinMultiStart(m)
 }
@@ -38,7 +40,7 @@ func (f *MultiChannelJoin) New() interface{} {
 func joinMultiStart(m *MultiChannelJoin) (jrpc2.Result, error) {
 	info, err := fundr.GetChannelAddresses(&m.Channels)
 	if err != nil {
-		cancelMulti(info.Outputs)
+		cancelMulti(m.Channels)
 		return nil, err
 	}
 
@@ -68,12 +70,13 @@ func joinMultiStart(m *MultiChannelJoin) (jrpc2.Result, error) {
 		return nil, errors.New(result.Error)
 	}
 
-	return string(result.Response), nil
+	joinid = result.Response.Id
+	return result.Response, nil
 }
 
-func cancelMulti(outputs map[string]*wallet.Outputs) {
-	for k, _ := range outputs {
-		_, err := rpc.FundChannelCancel(k)
+func cancelMulti(chans []rpc.FundChannelStartRequest) {
+	for _, ch := range chans {
+		_, err := rpc.FundChannelCancel(ch.Id)
 		if err != nil {
 			log.Printf("fundchannel_cancel error: %s", err.Error())
 		}
