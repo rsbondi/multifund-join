@@ -9,9 +9,9 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/niftynei/glightning/glightning"
 	"github.com/niftynei/glightning/jrpc2"
 	"github.com/rsbondi/multifund-join/multijoin"
-	"github.com/rsbondi/multifund/rpc"
 	"github.com/rsbondi/multifund/wallet"
 )
 
@@ -20,7 +20,7 @@ among multiple peers{channels} is an array of object{"id" string, "satoshi" int,
 
 type MultiChannelJoin struct {
 	Host     string                        `json:"host"`
-	Channels []rpc.FundChannelStartRequest `json:"channels"`
+	Channels []glightning.FundChannelStart `json:"channels"`
 }
 
 var joinid int
@@ -68,7 +68,7 @@ func waitForStatus(id int, host string) {
 func joinMultiStart(m *MultiChannelJoin) (jrpc2.Result, error) {
 	info, err := fundr.GetChannelAddresses(&m.Channels)
 	if err != nil {
-		cancelMulti(m.Channels)
+		cancelMulti(&m.Channels)
 		return nil, err
 	}
 
@@ -104,9 +104,9 @@ func joinMultiStart(m *MultiChannelJoin) (jrpc2.Result, error) {
 	return result.Response, nil
 }
 
-func cancelMulti(chans []rpc.FundChannelStartRequest) {
-	for _, ch := range chans {
-		_, err := rpc.FundChannelCancel(ch.Id)
+func cancelMulti(chans *[]glightning.FundChannelStart) {
+	for _, ch := range *chans {
+		_, err := fundr.Lightning.CancelFundChannel(ch.Id)
 		if err != nil {
 			log.Printf("fundchannel_cancel error: %s", err.Error())
 		}
