@@ -22,7 +22,7 @@ var plugin *glightning.Plugin
 var fundr *funder.Funder
 var queue []funder.FundingInfo
 var mixid = 1
-var mix map[string]wallet.Transaction
+var mix map[int]wallet.Transaction
 
 func handleJoin(w http.ResponseWriter, req *http.Request) {
 	decoder := json.NewDecoder(req.Body)
@@ -68,8 +68,7 @@ func handleJoin(w http.ResponseWriter, req *http.Request) {
 		if err != nil {
 			log.Printf("no go: %s", err.Error())
 		}
-		log.Printf("tx from join: %s", tx.String())
-		mix[string(mixid)] = tx
+		mix[mixid] = tx
 		mixid++
 	}
 
@@ -83,7 +82,10 @@ func handleJoin(w http.ResponseWriter, req *http.Request) {
 func handleStatus(w http.ResponseWriter, req *http.Request) {
 	id := req.URL.Path[len("/status/"):]
 	var res *multijoin.JoinStatusResponse
-	if tx, ok := mix[id]; ok {
+	mid, err := strconv.ParseInt(id, 10, 32)
+	b := []byte{}
+
+	if tx, ok := mix[int(mid)]; ok {
 		res = &multijoin.JoinStatusResponse{
 			Tx:    &tx.Unsigned,
 			Error: "",
@@ -91,10 +93,9 @@ func handleStatus(w http.ResponseWriter, req *http.Request) {
 		json.NewEncoder(w).Encode(res)
 		return
 	}
-	mid, err := strconv.ParseInt(id, 10, 32)
 	if err != nil {
 		res = &multijoin.JoinStatusResponse{
-			Tx:    nil,
+			Tx:    &b,
 			Error: err.Error(),
 		}
 		json.NewEncoder(w).Encode(res)
@@ -102,14 +103,14 @@ func handleStatus(w http.ResponseWriter, req *http.Request) {
 	}
 	if int(mid) > mixid {
 		res = &multijoin.JoinStatusResponse{
-			Tx:    nil,
+			Tx:    &b,
 			Error: "Invalid mix id",
 		}
 		json.NewEncoder(w).Encode(res)
 		return
 	}
 	res = &multijoin.JoinStatusResponse{
-		Tx:    nil,
+		Tx:    &b,
 		Error: "",
 	}
 	json.NewEncoder(w).Encode(res)
@@ -121,6 +122,7 @@ func main() {
 	fundr = &funder.Funder{}
 	fundr.Lightning = glightning.NewLightning()
 	queue = make([]funder.FundingInfo, 0)
+	mix = make(map[int]wallet.Transaction, 0)
 	rpc.Init(fundr.Lightning)
 
 	registerOptions(plugin)

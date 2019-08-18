@@ -37,6 +37,34 @@ func (f *MultiChannelJoin) New() interface{} {
 	return &MultiChannelJoin{}
 }
 
+func waitForStatus(id int, host string) {
+	ticker := time.NewTicker(5 * time.Second)
+	for {
+		select {
+		case <-ticker.C:
+			url := fmt.Sprintf("%s/status/%d", host, id)
+			req, _ := http.NewRequest("POST", url, nil)
+			client := &http.Client{Timeout: time.Second * 10}
+			res, err := client.Do(req)
+			if err != nil {
+				log.Printf("unable to do request: %s", err.Error())
+				return
+			}
+			defer res.Body.Close()
+
+			result := &multijoin.JoinStatusResponse{}
+			err = json.NewDecoder(res.Body).Decode(&result)
+			if err != nil {
+				log.Printf("unable to decode request: %s", err.Error())
+				return
+			}
+			if len(*result.Tx) != 0 {
+				log.Printf("status check: %v", result.Tx)
+			}
+		}
+	}
+}
+
 func joinMultiStart(m *MultiChannelJoin) (jrpc2.Result, error) {
 	info, err := fundr.GetChannelAddresses(&m.Channels)
 	if err != nil {
@@ -49,7 +77,8 @@ func joinMultiStart(m *MultiChannelJoin) (jrpc2.Result, error) {
 		log.Printf("unable to marshall json: %s", err.Error())
 		return nil, err
 	}
-	req, _ := http.NewRequest("POST", fmt.Sprintf("%s/join", m.Host), bytes.NewBuffer(jsoncall))
+	host := fmt.Sprintf("%s/join", m.Host)
+	req, _ := http.NewRequest("POST", host, bytes.NewBuffer(jsoncall))
 	client := &http.Client{Timeout: time.Second * 10}
 	res, err := client.Do(req)
 	if err != nil {
@@ -71,6 +100,7 @@ func joinMultiStart(m *MultiChannelJoin) (jrpc2.Result, error) {
 	}
 
 	joinid = result.Response.Id
+	go waitForStatus(joinid, m.Host)
 	return result.Response, nil
 }
 
