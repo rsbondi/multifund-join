@@ -12,7 +12,6 @@ import (
 	"github.com/niftynei/glightning/glightning"
 	"github.com/rsbondi/multifund-join/multijoin"
 	"github.com/rsbondi/multifund/funder"
-	"github.com/rsbondi/multifund/rpc"
 	"github.com/rsbondi/multifund/wallet"
 )
 
@@ -123,7 +122,6 @@ func main() {
 	fundr.Lightning = glightning.NewLightning()
 	queue = make([]funder.FundingInfo, 0)
 	mix = make(map[int]wallet.Transaction, 0)
-	rpc.Init(fundr.Lightning)
 
 	registerOptions(plugin)
 
@@ -142,14 +140,13 @@ func onInit(plugin *glightning.Plugin, options map[string]string, config *glight
 	fundr.Lightningdir = config.LightningDir
 	options["rpc-file"] = fmt.Sprintf("%s/%s", config.LightningDir, config.RpcFile)
 	fundr.Lightning.StartUp(config.RpcFile, config.LightningDir)
-	fundr.Bitcoin = wallet.NewBitcoinWallet()
-
-	cfg, err := rpc.ListConfigs()
+	cfg, err := fundr.Lightning.ListConfigs()
 	if err != nil {
 		log.Fatal(err)
 	}
+	fundr.Bitcoin = wallet.NewBitcoinWallet(cfg)
 
-	switch cfg.Network {
+	switch cfg["network"] {
 	case "bitcoin":
 		fundr.BitcoinNet = &chaincfg.MainNetParams
 	case "regtest":

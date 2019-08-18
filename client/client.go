@@ -8,7 +8,6 @@ import (
 	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/niftynei/glightning/glightning"
 	"github.com/rsbondi/multifund/funder"
-	"github.com/rsbondi/multifund/rpc"
 	"github.com/rsbondi/multifund/wallet"
 )
 
@@ -23,7 +22,6 @@ func main() {
 	fundr.Lightning = glightning.NewLightning()
 	fundr.Wallettype = wallet.WALLET_INTERNAL
 
-	rpc.Init(fundr.Lightning)
 	registerMethods(plugin)
 
 	err := plugin.Start(os.Stdin, os.Stdout)
@@ -38,16 +36,15 @@ func onInit(plugin *glightning.Plugin, options map[string]string, config *glight
 	options["rpc-file"] = fmt.Sprintf("%s/%s", config.LightningDir, config.RpcFile)
 	log.Printf("reading from rpc file: %s", options["rpc-file"])
 	fundr.Lightning.StartUp(config.RpcFile, config.LightningDir)
-	fundr.Bitcoin = wallet.NewBitcoinWallet() // TODO: do something different in other packege for fee estimate, this will probably change but bitcoin wallet should not be needed here
-
-	cfg, err := rpc.ListConfigs()
+	cfg, err := fundr.Lightning.ListConfigs()
 	if err != nil {
 		log.Fatal(err)
 	}
+	fundr.Bitcoin = wallet.NewBitcoinWallet(cfg) // TODO: do something different in other packege for fee estimate, this will probably change but bitcoin wallet should not be needed here
 
-	log.Printf("bitcoin network(from listconfig): %s", cfg.Network)
+	log.Printf("bitcoin network(from listconfig): %s", cfg["network"])
 
-	switch cfg.Network {
+	switch cfg["network"] {
 	case "bitcoin":
 		fundr.BitcoinNet = &chaincfg.MainNetParams
 	case "regtest":
