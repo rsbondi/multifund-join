@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 
 	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/niftynei/glightning/glightning"
@@ -19,11 +20,16 @@ const VERSION = "0.0.1-WIP"
 
 var plugin *glightning.Plugin
 var fundr *funder.Funder
-var queue []funder.FundingInfo
+
+// TODO: this needs to track the mix, so maybe a map, mixid and pids, plus index
+var queue map[int]JoinQueue
 var mixid = 1
-var mix map[int]wallet.Transaction
 
 func handleJoin(w http.ResponseWriter, req *http.Request) {
+	if _, ok := queue[int(mixid)]; !ok {
+		log.Println("new queue")
+		queue[int(mixid)] = NewJoinQueue()
+	}
 	decoder := json.NewDecoder(req.Body)
 	var joinReq funder.FundingInfo
 	err := decoder.Decode(&joinReq)
@@ -37,14 +43,11 @@ func handleJoin(w http.ResponseWriter, req *http.Request) {
 		}
 	} else {
 		log.Printf("queuing request: %v", joinReq.Recipients)
-		n := len(joinReq.Outputs)
-		word := "channel"
-		if n > 1 {
-			word = word + "s"
-		}
+		pid := queue[mixid].Add(joinReq)
 		data := &multijoin.JoinStartResponseData{
-			Message: fmt.Sprintf("successfuly queued to join funding for %d %s", n, word),
+			Message: fmt.Sprintf("successfuly queued to join funding for join: %d participant: %d", mixid, pid),
 			Id:      mixid,
+			Pid:     pid,
 		}
 		res = &multijoin.JoinStartResponse{
 			Response: data,
@@ -52,13 +55,12 @@ func handleJoin(w http.ResponseWriter, req *http.Request) {
 		}
 	}
 
-	queue = append(queue, joinReq)
-	if len(queue) >= 2 {
+	if len(queue[mixid].Participants) >= 2 {
 		f := &funder.FundingInfo{
 			Recipients: make([]*wallet.TxRecipient, 0),
 			Utxos:      make([]wallet.UTXO, 0),
 		}
-		for _, q := range queue {
+		for _, q := range queue[mixid].Participants {
 			f.Recipients = append(f.Recipients, q.Recipients...)
 			f.Utxos = append(f.Utxos, q.Utxos...)
 		}
@@ -67,30 +69,90 @@ func handleJoin(w http.ResponseWriter, req *http.Request) {
 		if err != nil {
 			log.Printf("no go: %s", err.Error())
 		}
-		mix[mixid] = tx
+		queue[mixid].SetTx(tx)
 		mixid++
 	}
 
-	// TODO: store this or proceed if threshold reached
-	//       how to respond once threshold is reached
-	//         does user need to be listening also, how to track?
-	//         or web socket?  what if connection breaks?
 	json.NewEncoder(w).Encode(res)
 }
 
 func handleStatus(w http.ResponseWriter, req *http.Request) {
-	id := req.URL.Path[len("/status/"):]
+	params := strings.Split(req.URL.Path[len("/status/"):], "/")
+	id := params[0]
+	participantid := params[1]
 	var res *multijoin.JoinStatusResponse
 	mid, err := strconv.ParseInt(id, 10, 32)
+	m := int(mid)
+	pid, err := strconv.ParseInt(participantid, 10, 32)
+	p := int(pid)
 	b := []byte{}
 
-	if tx, ok := mix[int(mid)]; ok {
-		res = &multijoin.JoinStatusResponse{
-			Tx:    &tx.Unsigned,
-			Error: "",
+	log.Printf("handleStatus: %d %d", m, p)
+
+	if join, ok := queue[m]; ok {
+		if _, pok := join.Participants[p]; pok {
+			log.Printf("tx from queue: %s", join.Tx)
+			if *join.sid == p && join.Tx != nil {
+				res = &multijoin.JoinStatusResponse{
+					Tx:    &join.Tx.Unsigned,
+					Error: "",
+				}
+				json.NewEncoder(w).Encode(res)
+				return
+			}
 		}
-		json.NewEncoder(w).Encode(res)
-		return
+		// https://github.com/btcsuite/btcwallet/issues/619
+		// this could use bitcoin rpc, but I think start with following
+		// or maybe implement only what I need https://github.com/bitcoin/bips/blob/master/bip-0174.mediawiki
+		//
+		//   OPTION sign in sequence, the old fasion way
+		//
+		//   track participants individually
+		//   first participant gets result of CreateTransaction
+		//   they sign and post to /signed
+		//   once recieved, then next request from next participant will recieve the partially signed
+		//   also need a watchdog, if any participant is not heard from in max time period, abort
+		//   PATH TO IMPLEMENT:
+		//     update handleJoin to also provide an index to the participant
+		//     use that index in the path /status/join_index/participant_index
+		//     return tx in sequence
+		//     add a route for submission of signed tx
+		//     when received, update local tx with partial, increment participant_index of join
+		//     return partial tx here when request participant_index matches local participant_index
+		//     find vout like https://github.com/rsbondi/multifund/blob/voutfromtx/fund.go#L185
+		//
+		//   OPTION bitcoin rpc
+		//
+		//    create psbt and send to each participant
+		//      need a type for this
+		//
+		//      ```
+		//      createpsbt [{"txid":"hex","vout":n,"sequence":n},...] [{"address":amount},{"data":"hex"},...] ( locktime replaceable )
+		//      ```
+		//
+		//      Result:
+		//		"psbt"        (string)  The resulting raw transaction (base64-encoded string)
+		//
+		//    watch for submissions of signatures
+		//    join when all are submitted
+		//      ```
+		//      joinpsbts ["psbt",...]
+		//      ```
+		//
+		//		Result:
+		//		"psbt"          (string) The base64-encoded partially signed transaction
+		//
+		//      ```
+		//     finalizepsbt "psbt" ( extract )
+		//      ```
+		//		Result:
+		//		{
+		//		"psbt" : "value",          (string) The base64-encoded partially signed transaction if not extracted
+		//		"hex" : "value",           (string) The hex-encoded network transaction if extracted
+		//		"complete" : true|false,   (boolean) If the transaction has a complete set of signatures
+		//		]
+		//		}
+
 	}
 	if err != nil {
 		res = &multijoin.JoinStatusResponse{
@@ -120,8 +182,7 @@ func main() {
 	plugin = glightning.NewPlugin(onInit)
 	fundr = &funder.Funder{}
 	fundr.Lightning = glightning.NewLightning()
-	queue = make([]funder.FundingInfo, 0)
-	mix = make(map[int]wallet.Transaction, 0)
+	queue = make(map[int]JoinQueue, 0)
 
 	registerOptions(plugin)
 

@@ -37,12 +37,13 @@ func (f *MultiChannelJoin) New() interface{} {
 	return &MultiChannelJoin{}
 }
 
-func waitForStatus(id int, host string) {
+func waitForStatus(id int, pid int, host string) {
 	ticker := time.NewTicker(5 * time.Second)
 	for {
 		select {
 		case <-ticker.C:
-			url := fmt.Sprintf("%s/status/%d", host, id)
+			url := fmt.Sprintf("%s/status/%d/%d", host, id, pid)
+			log.Printf("checking status: %s", url)
 			req, _ := http.NewRequest("POST", url, nil)
 			client := &http.Client{Timeout: time.Second * 10}
 			res, err := client.Do(req)
@@ -58,8 +59,10 @@ func waitForStatus(id int, host string) {
 				log.Printf("unable to decode request: %s", err.Error())
 				return
 			}
-			if len(*result.Tx) != 0 {
-				log.Printf("status check: %v", result.Tx)
+			if result.Tx != nil && len(*result.Tx) > 0 {
+				log.Printf("status check: %x", *result.Tx)
+				ticker.Stop()
+				return
 			}
 		}
 	}
@@ -100,7 +103,9 @@ func joinMultiStart(m *MultiChannelJoin) (jrpc2.Result, error) {
 	}
 
 	joinid = result.Response.Id
-	go waitForStatus(joinid, m.Host)
+	pid := result.Response.Pid
+	log.Printf("pid: &d", pid)
+	go waitForStatus(joinid, pid, m.Host)
 	return result.Response, nil
 }
 

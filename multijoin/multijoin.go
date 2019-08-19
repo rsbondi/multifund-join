@@ -3,6 +3,7 @@ package multijoin
 type JoinStartResponseData struct {
 	Message string `json:"message"`
 	Id      int    `json:"id"`
+	Pid     int    `json:"pid"`
 }
 
 type JoinStartResponse struct {
