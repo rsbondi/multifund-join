@@ -15,3 +15,9 @@ type JoinStatusResponse struct {
 	Tx    *[]byte `json:"tx"`
 	Error string  `json:"error"`
 }
+
+type TransactionSubmission struct {
+	Tx  string `json:"tx"`
+	Id  int    `json:"id"`
+	Pid int    `json:"pid"`
+}

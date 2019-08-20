@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -21,7 +22,6 @@ const VERSION = "0.0.1-WIP"
 var plugin *glightning.Plugin
 var fundr *funder.Funder
 
-// TODO: this needs to track the mix, so maybe a map, mixid and pids, plus index
 var queue map[int]JoinQueue
 var mixid = 1
 
@@ -91,7 +91,7 @@ func handleStatus(w http.ResponseWriter, req *http.Request) {
 
 	if join, ok := queue[m]; ok {
 		if _, pok := join.Participants[p]; pok {
-			log.Printf("tx from queue: %s", join.Tx)
+			log.Printf("tx from queue: %d, %s", *join.sid, join.Tx)
 			if *join.sid == p && join.Tx != nil {
 				res = &multijoin.JoinStatusResponse{
 					Tx:    &join.Tx.Unsigned,
@@ -109,17 +109,16 @@ func handleStatus(w http.ResponseWriter, req *http.Request) {
 		//
 		//   track participants individually
 		//   first participant gets result of CreateTransaction
-		//   they sign and post to /signed
+		//   they sign and post to /sig
 		//   once recieved, then next request from next participant will recieve the partially signed
 		//   also need a watchdog, if any participant is not heard from in max time period, abort
 		//   PATH TO IMPLEMENT:
-		//     update handleJoin to also provide an index to the participant
-		//     use that index in the path /status/join_index/participant_index
+		//     ✔ update handleJoin to also provide an index to the participant
+		//     ✔ use that index in the path /status/join_index/participant_index
 		//     return tx in sequence
-		//     add a route for submission of signed tx
+		//     ✔ add a route for submission of signed tx
 		//     when received, update local tx with partial, increment participant_index of join
 		//     return partial tx here when request participant_index matches local participant_index
-		//     find vout like https://github.com/rsbondi/multifund/blob/voutfromtx/fund.go#L185
 		//
 		//   OPTION bitcoin rpc
 		//
@@ -152,6 +151,7 @@ func handleStatus(w http.ResponseWriter, req *http.Request) {
 		//		"complete" : true|false,   (boolean) If the transaction has a complete set of signatures
 		//		]
 		//		}
+		//
 
 	}
 	if err != nil {
@@ -175,6 +175,35 @@ func handleStatus(w http.ResponseWriter, req *http.Request) {
 		Error: "",
 	}
 	json.NewEncoder(w).Encode(res)
+
+}
+
+func handleSig(w http.ResponseWriter, req *http.Request) {
+	decoder := json.NewDecoder(req.Body)
+	b := []byte{}
+	var sig multijoin.TransactionSubmission
+
+	err := decoder.Decode(&sig)
+	if err != nil {
+		log.Printf("decode error: %s", err.Error())
+		res := &multijoin.JoinStatusResponse{
+			Tx:    &b,
+			Error: err.Error(),
+		}
+		err = json.NewEncoder(w).Encode(res)
+		if err != nil {
+			log.Printf("encode error: %s", err.Error())
+		}
+		return
+	}
+
+	signed, err := hex.DecodeString(sig.Tx)
+	if err != nil {
+		log.Printf("hex decode error: %s", err.Error())
+	}
+	log.Printf("sig received: %x", signed)
+	queue[sig.Id].Tx.Unsigned = signed
+	*queue[sig.Id].sid++
 
 }
 
@@ -220,6 +249,7 @@ func onInit(plugin *glightning.Plugin, options map[string]string, config *glight
 
 	http.HandleFunc("/join", handleJoin)
 	http.HandleFunc("/status/", handleStatus)
+	http.HandleFunc("/sig", handleSig)
 
 	log.Printf("listening: %s", options["multi-join-port"])
 

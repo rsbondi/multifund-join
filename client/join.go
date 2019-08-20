@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/rsbondi/multifund/funder"
 	"log"
 	"net/http"
 	"time"
@@ -21,6 +22,9 @@ among multiple peers{channels} is an array of object{"id" string, "satoshi" int,
 type MultiChannelJoin struct {
 	Host     string                        `json:"host"`
 	Channels []glightning.FundChannelStart `json:"channels"`
+	id       int
+	pid      int
+	info     funder.FundingInfo
 }
 
 var joinid int
@@ -37,12 +41,12 @@ func (f *MultiChannelJoin) New() interface{} {
 	return &MultiChannelJoin{}
 }
 
-func waitForStatus(id int, pid int, host string) {
+func waitForStatus(m *MultiChannelJoin) {
 	ticker := time.NewTicker(5 * time.Second)
 	for {
 		select {
 		case <-ticker.C:
-			url := fmt.Sprintf("%s/status/%d/%d", host, id, pid)
+			url := fmt.Sprintf("%s/status/%d/%d", m.Host, m.id, m.pid)
 			log.Printf("checking status: %s", url)
 			req, _ := http.NewRequest("POST", url, nil)
 			client := &http.Client{Timeout: time.Second * 10}
@@ -61,6 +65,36 @@ func waitForStatus(id int, pid int, host string) {
 			}
 			if result.Tx != nil && len(*result.Tx) > 0 {
 				log.Printf("status check: %x", *result.Tx)
+				// TODO spin of go routine
+				tx := wallet.Transaction{
+					Unsigned: *result.Tx,
+				}
+
+				// TODO: CRITICAL TODO, VERIFY THAT WE GET OUR CHANGE AND OUR CHANNEL POINTS ARE CORRECT!!!!
+				//       find vout like https://github.com/rsbondi/multifund/blob/voutfromtx/fund.go#L185 (client)
+
+				fundr.Wally.Sign(&tx, m.info.Utxos)
+				log.Printf("signed: %x", tx.Signed)
+				sign := fmt.Sprintf("%s/sig", m.Host)
+				submission := &multijoin.TransactionSubmission{
+					Tx:  tx.String(),
+					Id:  m.id,
+					Pid: m.pid,
+				}
+				jsoncall, err := json.Marshal(submission)
+				if err != nil {
+					log.Printf("unable to marshall json: %s", err.Error())
+				}
+				log.Printf("json sig submission: %s", string(jsoncall))
+
+				req, _ := http.NewRequest("POST", sign, bytes.NewBuffer(jsoncall))
+				client := &http.Client{Timeout: time.Second * 10}
+				res, err := client.Do(req)
+				if err != nil {
+					log.Printf("unable to do request: %s", err.Error())
+				}
+				defer res.Body.Close()
+
 				ticker.Stop()
 				return
 			}
@@ -104,8 +138,11 @@ func joinMultiStart(m *MultiChannelJoin) (jrpc2.Result, error) {
 
 	joinid = result.Response.Id
 	pid := result.Response.Pid
-	log.Printf("pid: &d", pid)
-	go waitForStatus(joinid, pid, m.Host)
+	log.Printf("pid: %d", pid)
+	m.id = joinid
+	m.pid = pid
+	m.info = *info
+	go waitForStatus(m)
 	return result.Response, nil
 }
 
