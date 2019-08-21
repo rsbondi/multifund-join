@@ -2,17 +2,20 @@ package main
 
 import (
 	"bytes"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/rsbondi/multifund/funder"
 	"log"
 	"net/http"
 	"time"
 
+	"github.com/btcsuite/btcd/wire"
+	"github.com/btcsuite/btcutil"
 	"github.com/niftynei/glightning/glightning"
 	"github.com/niftynei/glightning/jrpc2"
 	"github.com/rsbondi/multifund-join/multijoin"
+	"github.com/rsbondi/multifund/funder"
 	"github.com/rsbondi/multifund/wallet"
 )
 
@@ -70,8 +73,11 @@ func waitForStatus(m *MultiChannelJoin) {
 					Unsigned: *result.Tx,
 				}
 
-				// TODO: CRITICAL TODO, VERIFY THAT WE GET OUR CHANGE AND OUR CHANNEL POINTS ARE CORRECT!!!!
-				//       find vout like https://github.com/rsbondi/multifund/blob/voutfromtx/fund.go#L185 (client)
+				err = verifyTx(tx, m)
+				if err != nil {
+					log.Printf("output mismatch in transaction: %s", err.Error())
+					return // do not sign
+				}
 
 				fundr.Wally.Sign(&tx, m.info.Utxos)
 				log.Printf("signed: %x", tx.Signed)
@@ -100,6 +106,40 @@ func waitForStatus(m *MultiChannelJoin) {
 			}
 		}
 	}
+}
+
+func verifyTx(tx wallet.Transaction, m *MultiChannelJoin) error {
+	wtx := wire.NewMsgTx(2)
+	r := bytes.NewReader(tx.Unsigned)
+	wtx.Deserialize(r)
+
+	// check that the tx is sending where I specified
+	for _, o := range m.info.Recipients {
+		log.Printf("checking recipient %s", o.Address)
+		vout := -1
+		for v, txout := range wtx.TxOut {
+			log.Printf("checking output %x", txout.PkScript)
+			addr, err := btcutil.DecodeAddress(o.Address, fundr.BitcoinNet)
+			log.Printf("finding output for address: %s %d", o.Address, o.Amount)
+
+			if err != nil {
+				return err
+			}
+
+			log.Printf("finding output index: %s %x", txout.PkScript, addr.ScriptAddress())
+			if hex.EncodeToString(txout.PkScript[2:]) == hex.EncodeToString(addr.ScriptAddress()) {
+				if o.Amount != txout.Value {
+					return errors.New("Can not find output in transaction")
+				}
+				vout = v
+				break
+			}
+		}
+		if vout == -1 {
+			return errors.New("Can not find output in transaction")
+		}
+	}
+	return nil
 }
 
 func joinMultiStart(m *MultiChannelJoin) (jrpc2.Result, error) {
