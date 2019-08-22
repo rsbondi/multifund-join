@@ -21,3 +21,13 @@ type TransactionSubmission struct {
 	Id  int    `json:"id"`
 	Pid int    `json:"pid"`
 }
+
+type TxResponse struct {
+	Signed *[]byte `json:"signed"`
+	TxId   *string `json:"txid"`
+}
+
+type JoinUpdateResponse struct {
+	Response *TxResponse `json:"response"`
+	Error    string      `json:"error"`
+}

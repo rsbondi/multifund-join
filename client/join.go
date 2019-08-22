@@ -44,7 +44,68 @@ func (f *MultiChannelJoin) New() interface{} {
 	return &MultiChannelJoin{}
 }
 
-func waitForStatus(m *MultiChannelJoin) {
+func waitForCompleteTx(m *MultiChannelJoin) {
+	ticker := time.NewTicker(5 * time.Second)
+	for {
+		select {
+		case <-ticker.C:
+			url := fmt.Sprintf("%s/update/%d", m.Host, m.id)
+			log.Printf("checking update: %s", url)
+			req, _ := http.NewRequest("POST", url, nil)
+			client := &http.Client{Timeout: time.Second * 10}
+			res, err := client.Do(req)
+			if err != nil {
+				log.Printf("unable to do complete: %s", err.Error())
+				return
+			}
+			var result multijoin.JoinUpdateResponse
+			err = json.NewDecoder(res.Body).Decode(&result)
+			if err != nil {
+				log.Printf("unable to decode update: %s", err.Error())
+				return
+			}
+			defer res.Body.Close()
+
+			if result.Error != "" {
+				log.Printf("udate check error: %s", result.Error)
+			}
+
+			if result.Response != nil && *result.Response.TxId != "" {
+				// we should be done
+				tx := &wallet.Transaction{
+					Signed: *result.Response.Signed,
+					TxId:   *result.Response.TxId,
+				}
+				log.Printf("ready to complete channels")
+				complete(m, *tx)
+				ticker.Stop()
+				return
+			}
+		}
+	}
+
+}
+
+func complete(m *MultiChannelJoin, tx wallet.Transaction) {
+	channels, err := fundr.CompleteChannels(tx, m.info.Outputs)
+	if err != nil {
+		log.Printf("unable to complete channels: %s", err.Error())
+		return
+	}
+	log.Printf("channels complete: %v", channels)
+	url := fmt.Sprintf("%s/complete/%d/%d", m.Host, m.id, m.pid)
+	log.Printf("completing channels: %s", url)
+	req, _ := http.NewRequest("POST", url, nil)
+	client := &http.Client{Timeout: time.Second * 10}
+	res, err := client.Do(req)
+	if err != nil {
+		log.Printf("unable to do complete: %s", err.Error())
+		return
+	}
+	defer res.Body.Close()
+
+}
+func waitToSign(m *MultiChannelJoin) {
 	ticker := time.NewTicker(5 * time.Second)
 	for {
 		select {
@@ -98,9 +159,10 @@ func waitForStatus(m *MultiChannelJoin) {
 				res, err := client.Do(req)
 				if err != nil {
 					log.Printf("unable to do request: %s", err.Error())
+					return
 				}
 				defer res.Body.Close()
-
+				go waitForCompleteTx(m)
 				ticker.Stop()
 				return
 			}
@@ -182,7 +244,7 @@ func joinMultiStart(m *MultiChannelJoin) (jrpc2.Result, error) {
 	m.id = joinid
 	m.pid = pid
 	m.info = *info
-	go waitForStatus(m)
+	go waitToSign(m)
 	return result.Response, nil
 }
 

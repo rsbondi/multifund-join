@@ -12,6 +12,7 @@ type JoinQueue struct {
 	Tx           *wallet.Transaction
 	pid          *int // participant
 	sid          *int // signature
+	cid          map[int]bool
 }
 
 func NewJoinQueue() JoinQueue {
@@ -19,11 +20,13 @@ func NewJoinQueue() JoinQueue {
 	parties := make(map[int]funder.FundingInfo)
 	p := 0
 	s := 1
+	cid := make(map[int]bool, N_PARTICIPANTS)
 	return JoinQueue{
 		Participants: parties,
 		Tx:           &wallet.Transaction{},
 		pid:          &p,
 		sid:          &s,
+		cid:          cid,
 	}
 }
 

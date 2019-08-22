@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -11,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/btcsuite/btcd/chaincfg"
+	"github.com/btcsuite/btcd/wire"
 	"github.com/niftynei/glightning/glightning"
 	"github.com/rsbondi/multifund-join/multijoin"
 	"github.com/rsbondi/multifund/funder"
@@ -18,6 +20,7 @@ import (
 )
 
 const VERSION = "0.0.1-WIP"
+const N_PARTICIPANTS = 2
 
 var plugin *glightning.Plugin
 var fundr *funder.Funder
@@ -55,7 +58,7 @@ func handleJoin(w http.ResponseWriter, req *http.Request) {
 		}
 	}
 
-	if len(queue[mixid].Participants) >= 2 {
+	if len(queue[mixid].Participants) >= N_PARTICIPANTS {
 		f := &funder.FundingInfo{
 			Recipients: make([]*wallet.TxRecipient, 0),
 			Utxos:      make([]wallet.UTXO, 0),
@@ -154,6 +157,8 @@ func handleStatus(w http.ResponseWriter, req *http.Request) {
 		//
 
 	}
+
+	// here we need to respond with the txid if we have it, meaning we are done
 	if err != nil {
 		res = &multijoin.JoinStatusResponse{
 			Tx:    &b,
@@ -175,6 +180,62 @@ func handleStatus(w http.ResponseWriter, req *http.Request) {
 		Error: "",
 	}
 	json.NewEncoder(w).Encode(res)
+
+}
+
+func handleComplete(w http.ResponseWriter, req *http.Request) {
+	params := strings.Split(req.URL.Path[len("/complete/"):], "/")
+	id := params[0]
+	participantid := params[1]
+	mid, err := strconv.ParseInt(id, 10, 32)
+	if err != nil {
+		log.Printf("unable to parse path")
+	}
+	m := int(mid)
+	pid, err := strconv.ParseInt(participantid, 10, 32)
+	if err != nil {
+		log.Printf("unable to parse path")
+	}
+	p := int(pid)
+
+	queue[m].cid[p] = true
+	n := 0
+	for _, c := range queue[m].cid {
+		if c {
+			n++
+		}
+	}
+	if n >= N_PARTICIPANTS {
+		txid, err := fundr.Bitcoin.SendTx(queue[m].Tx.String())
+		if err != nil {
+			log.Printf("send error: %s", err.Error())
+		} else {
+			log.Printf("transaction sent: %s", txid)
+		}
+
+	}
+}
+
+func handleUpdate(w http.ResponseWriter, req *http.Request) {
+	id := req.URL.Path[len("/update/"):]
+	mid, err := strconv.ParseInt(id, 10, 32)
+	if err != nil {
+		log.Printf("unable to parse path")
+	}
+	m := int(mid)
+
+	tx := &multijoin.TxResponse{
+		Signed: &queue[m].Tx.Signed,
+		TxId:   &queue[m].Tx.TxId,
+	}
+	res := &multijoin.JoinUpdateResponse{
+		Response: tx,
+		Error:    "",
+	}
+	err = json.NewEncoder(w).Encode(res)
+	if err != nil {
+		log.Printf("encode error: %s", err.Error())
+	}
 
 }
 
@@ -204,6 +265,18 @@ func handleSig(w http.ResponseWriter, req *http.Request) {
 	log.Printf("sig received: %x", signed)
 	queue[sig.Id].Tx.Unsigned = signed
 	*queue[sig.Id].sid++
+
+	if *queue[sig.Id].sid > N_PARTICIPANTS {
+		log.Printf("sending tx: %s", queue[sig.Id].Tx.TxId)
+		queue[sig.Id].Tx.Signed = signed
+		wtx := wire.NewMsgTx(2)
+		r := bytes.NewReader(queue[sig.Id].Tx.Signed)
+		wtx.Deserialize(r)
+		queue[sig.Id].Tx.TxId = wtx.TxHash().String()
+
+		// queue[sig.Id].Tx.TxId = txid
+		log.Printf("tx sent: %s", queue[sig.Id].Tx.TxId)
+	}
 
 }
 
@@ -250,6 +323,8 @@ func onInit(plugin *glightning.Plugin, options map[string]string, config *glight
 	http.HandleFunc("/join", handleJoin)
 	http.HandleFunc("/status/", handleStatus)
 	http.HandleFunc("/sig", handleSig)
+	http.HandleFunc("/complete/", handleComplete)
+	http.HandleFunc("/update/", handleUpdate)
 
 	log.Printf("listening: %s", options["multi-join-port"])
 
