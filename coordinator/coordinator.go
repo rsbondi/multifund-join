@@ -328,5 +328,7 @@ func onInit(plugin *glightning.Plugin, options map[string]string, config *glight
 
 	log.Printf("listening: %s", options["multi-join-port"])
 
-	log.Fatal(http.ListenAndServe(":"+options["multi-join-port"], nil))
+	go (func() {
+		log.Fatal(http.ListenAndServe(":"+options["multi-join-port"], nil))
+	})()
 }
