@@ -18,3 +18,5 @@ the transaction is broadcast
 
 called from the client to the HOST or coordinator will queue the channel opening
 with the coordinator for channel with peer with `id` for n `satoshi`.
+
+[demo video](https://youtu.be/QVYWQ3c8yM0)
